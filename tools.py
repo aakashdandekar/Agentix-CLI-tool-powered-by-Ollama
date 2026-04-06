@@ -1,4 +1,5 @@
 import os
+import shlex
 import subprocess
 import pathlib
 import requests
@@ -15,7 +16,8 @@ TOOL_SCHEMAS = [
             "name": "run_shell",
             "description": (
                 "Execute a shell command on the Linux system and return stdout+stderr. "
-                "Use for file operations, package management, git, compiling, running scripts, etc."
+                "Use for file operations, package management, git, compiling, running scripts, etc. "
+                "Commands are restricted to the agent-files directory and its subdirectories."
             ),
             "parameters": {
                 "type": "object",
@@ -38,7 +40,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read the contents of a file and return them as a string.",
+            "description": "Read the contents of a file from inside the agent-files directory and return them as a string.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -60,7 +62,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "write_file",
-            "description": "Write (or overwrite) a file with the given content.",
+            "description": "Write (or overwrite) a file with the given content inside the agent-files directory.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -108,7 +110,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "list_directory",
-            "description": "List the contents of a directory, with optional recursion.",
+            "description": "List the contents of a directory inside the agent-files directory, with optional recursion.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -134,14 +136,87 @@ TOOL_SCHEMAS = [
     },
 ]
 
+TOOL_NAMES = {tool["function"]["name"] for tool in TOOL_SCHEMAS}
+AGENT_FILES_DIR = (pathlib.Path(__file__).resolve().parent / "agent-files").resolve()
+AGENT_FILES_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _is_within_agent_files(path: pathlib.Path) -> bool:
+    try:
+        path.relative_to(AGENT_FILES_DIR)
+        return True
+    except ValueError:
+        return False
+
+
+def _resolve_agent_path(path: str, *, allow_missing: bool = False) -> pathlib.Path:
+    raw_path = pathlib.Path(path).expanduser()
+    candidate = raw_path if raw_path.is_absolute() else AGENT_FILES_DIR / raw_path
+    resolved = candidate.resolve(strict=False)
+
+    if not _is_within_agent_files(resolved):
+        raise ValueError(
+            f"Path must stay inside {AGENT_FILES_DIR}"
+        )
+
+    if not allow_missing and not resolved.exists():
+        raise FileNotFoundError(path)
+
+    return resolved
+
+
+def _token_escapes_agent_files(token: str) -> bool:
+    if not token or token in {"-", ".", "&&", "||", "|", ">", ">>", "<", "2>", "2>>"}:
+        return False
+
+    if token.startswith("~"):
+        return True
+
+    if token.startswith("/"):
+        return not _is_within_agent_files(pathlib.Path(token).resolve(strict=False))
+
+    path_like = "/" in token or token in {".", ".."} or token.startswith(".")
+    if path_like:
+        parts = pathlib.PurePosixPath(token).parts
+        if ".." in parts:
+            return True
+
+    if "=" in token:
+        _, _, value = token.partition("=")
+        if value != token:
+            return _token_escapes_agent_files(value)
+
+    return False
+
+
+def _validate_shell_command_scope(command: str) -> tuple[bool, str]:
+    try:
+        tokens = shlex.split(command, posix=True)
+    except ValueError as exc:
+        return False, f"Could not parse command: {exc}"
+
+    for token in tokens:
+        if _token_escapes_agent_files(token):
+            return False, (
+                f"Shell commands must stay inside {AGENT_FILES_DIR}. "
+                f"Blocked token: {token}"
+            )
+
+    return True, ""
+
 
 
 # Tool implementations
-def run_shell(command: str, timeout: int = 30, safe_mode: bool = True) -> str:
+def run_shell(command: str, timeout: int = 30, safe_mode: bool = True, **kwargs) -> str:
     if not safety.check_command(command, safe_mode):
         result = f"Command was blocked or rejected by safety check."
         logger.log_tool_call("run_shell", {"command": command}, result, error=True)
         return result
+
+    allowed, reason = _validate_shell_command_scope(command)
+    if not allowed:
+        logger.log_tool_call("run_shell", {"command": command}, reason, error=True)
+        return reason
 
     try:
         proc = subprocess.run(
@@ -151,6 +226,8 @@ def run_shell(command: str, timeout: int = 30, safe_mode: bool = True) -> str:
             text=True,
             timeout=timeout,
             executable="/bin/bash",
+            cwd=AGENT_FILES_DIR,
+            env={**os.environ, "HOME": str(AGENT_FILES_DIR)},
         )
         output = ""
         if proc.stdout:
@@ -172,30 +249,30 @@ def run_shell(command: str, timeout: int = 30, safe_mode: bool = True) -> str:
         return result
 
 
-def read_file(path: str, max_bytes: int = 32768) -> str:
+def read_file(path: str, max_bytes: int = 32768, **kwargs) -> str:
     try:
-        p = pathlib.Path(path).expanduser().resolve()
-        if not p.exists():
-            result = f"File not found: {path}"
-            logger.log_tool_call("read_file", {"path": path}, result, error=True)
-            return result
+        p = _resolve_agent_path(path)
         with open(p, "r", encoding="utf-8", errors="replace") as f:
             content = f.read(max_bytes)
         if len(content) == max_bytes:
             content += f"\n... (truncated at {max_bytes} bytes)"
         logger.log_tool_call("read_file", {"path": path}, content)
         return content
+    except FileNotFoundError:
+        result = f"File not found: {path}"
+        logger.log_tool_call("read_file", {"path": path}, result, error=True)
+        return result
     except Exception as e:
         result = f"Error reading file: {e}"
         logger.log_tool_call("read_file", {"path": path}, result, error=True)
         return result
 
 
-def write_file(path: str, content: str, append: bool = False) -> str:
+def write_file(path: str, content: str, append: bool = False, **kwargs) -> str:
     try:
-        p = pathlib.Path(path).expanduser().resolve()
+        p = _resolve_agent_path(path, allow_missing=True)
         p.parent.mkdir(parents=True, exist_ok=True)
-        mode = "a" if append else "w"
+        mode = "a+" if append else "w+"
         with open(p, mode, encoding="utf-8") as f:
             f.write(content)
         action = "Appended to" if append else "Wrote"
@@ -208,7 +285,7 @@ def write_file(path: str, content: str, append: bool = False) -> str:
         return result
 
 
-def browse_web(url: str, max_chars: int = 8000) -> str:
+def browse_web(url: str, max_chars: int = 8000, **kwargs) -> str:
     try:
         headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) ai-agent/1.0"}
         resp = requests.get(url, headers=headers, timeout=15)
@@ -229,13 +306,9 @@ def browse_web(url: str, max_chars: int = 8000) -> str:
         return result
 
 
-def list_directory(path: str = ".", recursive: bool = False, show_hidden: bool = False) -> str:
+def list_directory(path: str = ".", recursive: bool = False, show_hidden: bool = False, **kwargs) -> str:
     try:
-        p = pathlib.Path(path).expanduser().resolve()
-        if not p.exists():
-            result = f"Path not found: {path}"
-            logger.log_tool_call("list_directory", {"path": path}, result, error=True)
-            return result
+        p = _resolve_agent_path(path)
         entries = []
         if recursive:
             for root, dirs, files in os.walk(p):
@@ -255,6 +328,10 @@ def list_directory(path: str = ".", recursive: bool = False, show_hidden: bool =
                 entries.append(f"  {item.name}{suffix}")
         result = f"{p}:\n" + ("\n".join(entries) if entries else "  (empty)")
         logger.log_tool_call("list_directory", {"path": path, "recursive": recursive}, result)
+        return result
+    except FileNotFoundError:
+        result = f"Path not found: {path}"
+        logger.log_tool_call("list_directory", {"path": path}, result, error=True)
         return result
     except Exception as e:
         result = f"Error listing directory: {e}"
