@@ -1,4 +1,4 @@
-# Agentix — CLI tool powered by Llama 3 via Ollama
+# Agentix — CLI tool powered by Ollama
 
 A lightweight, agentic command-line AI assistant that uses **Llama 3** (via Ollama) with real tool-use: run shell commands, read/write files, browse the web, and list directories.
 
