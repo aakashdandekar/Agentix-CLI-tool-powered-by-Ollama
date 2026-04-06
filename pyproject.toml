@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "agentix"
+version = "0.1.0"
+description = "CLI AI agent powered by Llama 3 via Ollama"
+requires-python = ">=3.11"
+dependencies = [
+    "ollama>=0.3",
+    "rich>=13",
+    "requests>=2.31",
+    "beautifulsoup4>=4.12",
+    "pyyaml>=6",
+]
+
+[project.scripts]
+aiagent = "agent:main"
+
+[tool.setuptools]
+py-modules = ["agent", "tools", "config", "logger", "safety"]
