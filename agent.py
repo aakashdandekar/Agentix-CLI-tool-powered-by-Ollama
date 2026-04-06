@@ -27,7 +27,7 @@ console = Console(theme=THEME)
 
 def show_status_banner(cfg: dict) -> None:
     console.print(Panel(
-        f"[bold cyan]Jarvis[/bold cyan]\n"
+        f"[bold cyan]Agentix[/bold cyan]\n"
         f"Model: [bold]{cfg['model']}[/bold]  |  "
         f"Safe mode: [bold]{'ON' if cfg['safe_mode'] else 'OFF'}[/bold]  |  "
         f"Type [bold]/help[/bold] for commands, [bold]/exit[/bold] to quit.",
