@@ -7,7 +7,7 @@ CONFIG_DIR = pathlib.Path.home() / ".aiagent"
 CONFIG_FILE = CONFIG_DIR / "config.yaml"
 
 DEFAULTS = {
-    "model": "gemma4:31b-cloud",
+    "model": "minimax-m2:cloud",
     "safe_mode": True,
     "log_path": str(pathlib.Path.home() / ".aiagent" / "tool.log"),
     "system_prompt": (
