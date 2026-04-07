@@ -1,0 +1,11 @@
+This is a demo text file with some dummy data.
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+
+Sample Data:
+- Item 1: Hello World
+- Item 2: Testing
+- Item 3: Sample Content
+- Item 4: 12345
+
+This file was created to demonstrate file creation functionality.
