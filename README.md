@@ -1,6 +1,6 @@
-# Agentix — CLI tool powered by Llama 3 via Ollama
+# Agentix — CLI tool powered by Minimax-m2 / Gemma 4 via Ollama
 
-A lightweight, agentic command-line AI assistant that uses **Llama 3** (via Ollama) with real tool-use: run shell commands, read/write files, browse the web, and list directories.
+A lightweight, agentic command-line AI assistant that uses **minimax-m2:cloud** / **Gemma 4** (via Ollama) with real tool-use: run shell commands, read/write files, browse the web, and list directories. All file and shell operations are safely sandboxed in the `agent-files/` directory.
 
 ---
 
@@ -18,16 +18,20 @@ A lightweight, agentic command-line AI assistant that uses **Llama 3** (via Olla
 # 1. Clone / copy the project folder
 cd agentix
 
-# 2. Install Python dependencies
+# 2. Create and activate a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 3. Install Python dependencies
 pip install -r requirements.txt
 
-# 3. Pull the Llama 3 model
-ollama pull llama3:latest
+# 4. Pull the default model (e.g. minimax-m2:cloud or gemma)
+ollama pull minimax-m2:cloud
 
-# 4. Make agent.py executable (optional)
-chmod +x agent.py
+# 5. Make agent.py and launch.sh executable (optional)
+chmod +x agent.py launch.sh
 
-# 5. (Optional) install as a CLI tool
+# 6. (Optional) install as a CLI tool
 pip install -e .
 ```
 
@@ -38,6 +42,10 @@ pip install -e .
 ### Interactive REPL
 
 ```bash
+# Using the launch script (automatically activates .venv and opens in a new terminal)
+./launch.sh
+
+# Or directly:
 python agent.py
 # or, after pip install -e .
 aiagent
@@ -46,15 +54,15 @@ aiagent
 ### One-shot (pipe-friendly)
 
 ```bash
-python agent.py "List all Python files in the current directory"
-python agent.py --model llama3:latest "Summarise /etc/os-release"
+python agent.py "List all Python files in the agent-files directory"
+python agent.py --model minimax-m2:cloud "Summarise agent-files/example.txt"
 ```
 
 ### Flags
 
 | Flag | Description |
 |---|---|
-| `--model / -m` | Override model (e.g. `llama3:latest`) |
+| `--model / -m` | Override model (e.g. `minimax-m2:cloud`) |
 | `--ollama-url / -u` | Override Ollama URL (default `http://localhost:11434`) |
 | `--no-safe-mode` | Disable confirmation prompts for risky commands |
 | `--show-config` | Print resolved config and exit |
@@ -80,11 +88,11 @@ python agent.py --model llama3:latest "Summarise /etc/os-release"
 
 | Tool | Description |
 |---|---|
-| `run_shell` | Execute any bash command; blocked patterns + confirmation prompts in safe mode |
-| `read_file` | Read a file's content (up to 32 KB by default) |
-| `write_file` | Write or append to a file |
+| `run_shell` | Execute a bash command (restricted to `agent-files/` directory) |
+| `read_file` | Read a file's content (restricted to `agent-files/`, up to 32 KB by default) |
+| `write_file` | Write or append to a file (restricted to `agent-files/`) |
 | `browse_web` | Fetch a URL and return readable plain text |
-| `list_directory` | List directory contents, optionally recursive |
+| `list_directory` | List directory contents inside `agent-files/`, optionally recursive |
 
 ---
 
@@ -96,10 +104,10 @@ The tool log is at `~/.aiagent/tool.log` (JSONL, one entry per tool call).
 ### Default config
 
 ```yaml
-model: llama3:latest
+model: minimax-m2:cloud
 safe_mode: true
 ollama_url: http://localhost:11434
-max_iterations: 10
+max_iterations: 20
 log_path: ~/.aiagent/tool.log
 system_prompt: "You are a helpful CLI assistant…"
 ```
@@ -120,6 +128,7 @@ Disable with `--no-safe-mode` flag or `/safe` in the REPL (temporary).
 
 ```
 agentix/
+├── agent-files/    # Sandboxed directory for all file & shell operations
 ├── agent.py        # Entry point · CLI args · REPL loop · agentic tool loop
 ├── tools.py        # run_shell · read_file · write_file · browse_web · list_directory
 ├── config.py       # load/save config.yaml · defaults · CLI flag overrides
@@ -127,6 +136,8 @@ agentix/
 ├── safety.py       # dangerous command blocklist · confirmation prompts · safe-mode
 ├── pyproject.toml  # package metadata · dependencies · [project.scripts] entry point
 ├── requirements.txt
+├── launch.sh       # bash script to activate virtual environment and launch main.py
+├── main.py         # python script to spawn agent.py inside a new ptyxis terminal
 └── README.md
 
 ~/.aiagent/         # auto-created at runtime
