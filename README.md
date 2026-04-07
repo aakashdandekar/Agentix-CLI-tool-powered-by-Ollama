@@ -1,6 +1,6 @@
-# Agentix — CLI tool powered by Minimax-m2 / Gemma 4 via Ollama
+# Agentix — CLI AI Agent powered by Ollama
 
-A lightweight, agentic command-line AI assistant that uses **minimax-m2:cloud** / **Gemma 4** (via Ollama) with real tool-use: run shell commands, read/write files, browse the web, and list directories. All file and shell operations are safely sandboxed in the `agent-files/` directory.
+A lightweight, agentic command-line AI assistant that can use **any tool-capable LLM** (via Ollama) with real tool-use: run shell commands, read/write files, browse the web, and list directories. All file and shell operations are safely sandboxed in the `agent-files/` directory.
 
 ---
 
@@ -25,8 +25,8 @@ source .venv/bin/activate
 # 3. Install Python dependencies
 pip install -r requirements.txt
 
-# 4. Pull the default model (e.g. minimax-m2:cloud or gemma)
-ollama pull minimax-m2:cloud
+# 4. Pull your preferred tool-capable model (e.g., llama3.1, qwen2.5)
+ollama pull <model-name>
 
 # 5. Make agent.py and launch.sh executable (optional)
 chmod +x agent.py launch.sh
@@ -55,14 +55,14 @@ aiagent
 
 ```bash
 python agent.py "List all Python files in the agent-files directory"
-python agent.py --model minimax-m2:cloud "Summarise agent-files/example.txt"
+python agent.py --model <model-name> "Summarise agent-files/example.txt"
 ```
 
 ### Flags
 
 | Flag | Description |
 |---|---|
-| `--model / -m` | Override model (e.g. `minimax-m2:cloud`) |
+| `--model / -m` | Override model (e.g. `llama3.1`) |
 | `--ollama-url / -u` | Override Ollama URL (default `http://localhost:11434`) |
 | `--no-safe-mode` | Disable confirmation prompts for risky commands |
 | `--show-config` | Print resolved config and exit |
@@ -104,7 +104,7 @@ The tool log is at `~/.aiagent/tool.log` (JSONL, one entry per tool call).
 ### Default config
 
 ```yaml
-model: minimax-m2:cloud
+model: <model-name>
 safe_mode: true
 ollama_url: http://localhost:11434
 max_iterations: 20
@@ -113,6 +113,24 @@ system_prompt: "You are a helpful CLI assistant…"
 ```
 
 Edit `~/.aiagent/config.yaml` to persist changes across sessions.
+
+### Changing the Model
+
+This project is compatible with any Ollama model that supports local tool calling. To permanently change the model used when launching via `./launch.sh`, simply update the `--model` argument inside `main.py`:
+
+```python
+# main.py
+import subprocess
+
+subprocess.Popen([
+    "ptyxis",
+    "--",
+    "bash", "-c",
+    "python3 agent.py --model your-model-here"
+])
+```
+
+You can also change the model dynamically from the interactive REPL using the `/model <name>` slash command.
 
 ---
 
