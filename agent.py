@@ -14,8 +14,6 @@ import config
 import logger
 import tools
 
-
-# Rich console setup
 THEME = Theme({
     "agent": "bold cyan",
     "tool": "bold yellow",
@@ -37,22 +35,51 @@ def show_status_banner(cfg: dict) -> None:
     ))
 
 
-# Per-model tool-support cache  (True = supported, False = not supported)
-_model_tools_support: dict[str, bool] = {}
+def set_active_model(cfg: dict, new_model: str, persist: bool = False) -> bool:
+    new_model = new_model.strip()
+    if not new_model:
+        command = "/change <name>" if persist else "/model <name>"
+        console.print(f"[error]Usage: {command}[/error]")
+        return False
 
+    cfg["model"] = new_model
 
-def _normalize_tool_calls(payload) -> list[dict]:
+    if persist:
+        try:
+            persisted_cfg = config.load_config()
+            persisted_cfg["model"] = new_model
+            config.save_config(persisted_cfg)
+        except Exception as e:
+            console.print(
+                f"[error]Model switched for this session, but could not save config: {e}[/error]"
+            )
+            show_status_banner(cfg)
+            return False
+
+        console.print(
+            f"[system]Model changed to: [bold]{new_model}[/bold] "
+            "for this session and future launches.[/system]"
+        )
+    else:
+        console.print(f"[system]Model switched to: [bold]{new_model}[/bold][/system]")
+
+    show_status_banner(cfg)
+    return True
+
+model_toolsSupport: dict[str, bool] = {}
+
+def normalize_toolcalls(payload) -> list[dict]:
     if isinstance(payload, list):
         calls = []
         for item in payload:
-            calls.extend(_normalize_tool_calls(item))
+            calls.extend(normalize_toolcalls(item))
         return calls
 
     if not isinstance(payload, dict):
         return []
 
     if "tool_calls" in payload:
-        return _normalize_tool_calls(payload["tool_calls"])
+        return normalize_toolcalls(payload["tool_calls"])
 
     if "function" in payload and isinstance(payload["function"], dict):
         payload = payload["function"]
@@ -75,7 +102,7 @@ def _normalize_tool_calls(payload) -> list[dict]:
     return [{"function": {"name": name, "arguments": arguments}}]
 
 
-def _extract_json_snippets(text: str):
+def extract_json(text: str):
     decoder = json.JSONDecoder()
     for idx, char in enumerate(text):
         if char not in "[{":
@@ -87,7 +114,7 @@ def _extract_json_snippets(text: str):
         yield text[idx:idx + end]
 
 
-def parse_tool_calls_from_content(content: str) -> list[dict]:
+def parse_toolcalls(content: str) -> list[dict]:
     if not content or not content.strip():
         return []
 
@@ -97,7 +124,7 @@ def parse_tool_calls_from_content(content: str) -> list[dict]:
 
     seen = set()
     for candidate in candidates:
-        snippets = [candidate, *_extract_json_snippets(candidate)]
+        snippets = [candidate, *extract_json(candidate)]
         for snippet in snippets:
             snippet = snippet.strip()
             if not snippet or snippet in seen:
@@ -109,14 +136,14 @@ def parse_tool_calls_from_content(content: str) -> list[dict]:
             except json.JSONDecodeError:
                 continue
 
-            tool_calls = _normalize_tool_calls(payload)
+            tool_calls = normalize_toolcalls(payload)
             if tool_calls:
                 return tool_calls
 
     return []
 
 
-def _tool_call_signature(tool_name: str, arguments: dict) -> str:
+def tool_callSignature(tool_name: str, arguments: dict) -> str:
     return json.dumps(
         {
             "name": tool_name,
@@ -126,13 +153,9 @@ def _tool_call_signature(tool_name: str, arguments: dict) -> str:
         ensure_ascii=False,
     )
 
-
-# Ollama client
 def ollama_chat(messages: list, model: str, ollama_url: str, tool_list: list) -> dict:
     url = f"{ollama_url}/api/chat"
-
-    # Skip tools field if we already know this model doesn't support it
-    use_tools = _model_tools_support.get(model, True) and bool(tool_list)
+    use_tools = model_toolsSupport.get(model, True) and bool(tool_list)
 
     payload = {
         "model": model,
@@ -145,9 +168,8 @@ def ollama_chat(messages: list, model: str, ollama_url: str, tool_list: list) ->
     try:
         resp = requests.post(url, json=payload, timeout=600)
 
-        # Graceful fallback: model doesn't support the tools API
         if resp.status_code == 400 and "does not support tools" in resp.text:
-            _model_tools_support[model] = False
+            model_toolsSupport[model] = False
             console.print(
                 f"[system]⚠  {model} does not support the tools API — "
                 "falling back to prompt-based mode.[/system]"
@@ -155,7 +177,7 @@ def ollama_chat(messages: list, model: str, ollama_url: str, tool_list: list) ->
             payload.pop("tools", None)
             resp = requests.post(url, json=payload, timeout=600)
         else:
-            _model_tools_support[model] = True
+            model_toolsSupport[model] = True
 
         resp.raise_for_status()
         return resp.json()
@@ -174,9 +196,6 @@ def ollama_chat(messages: list, model: str, ollama_url: str, tool_list: list) ->
         time.sleep(360)
         sys.exit(1)
 
-
-
-# Agentic tool loop
 def run_agent_turn(user_input: str, history: list, cfg: dict) -> str:
     history.append({"role": "user", "content": user_input})
     last_tool_signature: str | None = None
@@ -192,7 +211,7 @@ def run_agent_turn(user_input: str, history: list, cfg: dict) -> str:
 
         message = response.get("message", {})
         content = message.get("content", "")
-        tool_calls = message.get("tool_calls", []) or parse_tool_calls_from_content(content)
+        tool_calls = message.get("tool_calls", []) or parse_toolcalls(content)
 
         if not tool_calls:
             history.append({"role": "assistant", "content": content})
@@ -211,7 +230,7 @@ def run_agent_turn(user_input: str, history: list, cfg: dict) -> str:
                 except json.JSONDecodeError:
                     raw_args = {}
 
-            signature = _tool_call_signature(tool_name, raw_args)
+            signature = tool_callSignature(tool_name, raw_args)
 
             if signature == last_tool_signature:
                 previous_result = last_tool_result or ""
@@ -258,9 +277,6 @@ def run_agent_turn(user_input: str, history: list, cfg: dict) -> str:
 
     return "Max iterations reached without a final answer."
 
-
-
-# Slash commands
 def handle_slash(cmd: str, cfg: dict, history: list) -> bool:
     cmd = cmd.strip()
     if cmd in ("/exit", "/quit", "/q"):
@@ -271,7 +287,8 @@ def handle_slash(cmd: str, cfg: dict, history: list) -> bool:
             "[bold]/help[/bold]       - show this help\n"
             "[bold]/clear[/bold]      - clear conversation history\n"
             "[bold]/config[/bold]     - show current configuration\n"
-            "[bold]/model <name>[/bold] - switch model on the fly\n"
+            "[bold]/model <name>[/bold]  - switch model for this session\n"
+            "[bold]/change <name>[/bold] - change the default model and switch now\n"
             "[bold]/safe[/bold]       - toggle safe mode\n"
             "[bold]/log[/bold]        - show log file path\n"
             "[bold]/history[/bold]    - show message count\n"
@@ -285,13 +302,13 @@ def handle_slash(cmd: str, cfg: dict, history: list) -> bool:
 
     elif cmd == "/config":
         config.show_config(cfg)
-    
-    elif cmd.startswith("/model "):
-        new_model = cmd[7:].strip()
-        cfg["model"] = new_model
-        console.print(f"[system]Model switched to: [bold]{new_model}[/bold][/system]")
-        show_status_banner(cfg)
-    
+
+    elif cmd == "/model" or cmd.startswith("/model "):
+        set_active_model(cfg, cmd[len("/model"):], persist=False)
+
+    elif cmd == "/change" or cmd.startswith("/change "):
+        set_active_model(cfg, cmd[len("/change"):], persist=True)
+
     elif cmd == "/safe":
         cfg["safe_mode"] = not cfg["safe_mode"]
         state = "ON" if cfg["safe_mode"] else "OFF"
@@ -309,9 +326,6 @@ def handle_slash(cmd: str, cfg: dict, history: list) -> bool:
     
     return True
 
-
-
-# REPL
 def repl(cfg: dict) -> None:
     history = [{"role": "system", "content": cfg["system_prompt"]}]
     show_status_banner(cfg)
@@ -340,16 +354,11 @@ def repl(cfg: dict) -> None:
             border_style="cyan",
         ))
 
-
-
-# One-shot mode (non-interactive)
 def one_shot(prompt: str, cfg: dict) -> None:
     history = [{"role": "system", "content": cfg["system_prompt"]}]
     with console.status("[agent]Thinking…[/agent]", spinner="dots"):
         answer = run_agent_turn(prompt, history, cfg)
     console.print(Markdown(answer))
-
-
 
 # CLI entry point
 def main() -> None:
