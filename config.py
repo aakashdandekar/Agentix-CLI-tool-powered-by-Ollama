@@ -29,17 +29,17 @@ DEFAULTS = {
         "If file not located in current directory then check in sub-directories."
         "Execute the command once and check result. if result is not what expected then redo else respond to user."
     ),
-    "max_iterations": 20,
+    "max_iterations": 50,
     "ollama_url": "http://localhost:11434",
 }
 
 
-def _ensure_config_dir() -> None:
+def ensure_config_folder() -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def load_config(overrides: dict | None = None) -> dict:
-    _ensure_config_dir()
+    ensure_config_folder()
     config = dict(DEFAULTS)
 
     if CONFIG_FILE.exists():
@@ -59,7 +59,7 @@ def load_config(overrides: dict | None = None) -> dict:
 
 
 def save_config(config: dict) -> None:
-    _ensure_config_dir()
+    ensure_config_folder()
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         yaml.dump(config, f, default_flow_style=False)
 

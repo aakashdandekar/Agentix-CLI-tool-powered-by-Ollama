@@ -8,12 +8,12 @@ LOG_DIR = pathlib.Path.home() / ".aiagent"
 LOG_FILE = LOG_DIR / "tool.log"
 
 
-def _ensure_log_dir() -> None:
+def ensure_log_folder() -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def log_tool_call(tool_name: str, arguments: dict, result: str, error: bool = False) -> None:
-    _ensure_log_dir()
+    ensure_log_folder()
     entry = {
         "timestamp": datetime.datetime.now().isoformat(),
         "tool": tool_name,
